@@ -7,6 +7,11 @@ WORKDIR /app
 # 防止 Python 缓冲标准输出和错误（能及时在控制台看到日志）
 ENV PYTHONUNBUFFERED=1
 
+# 安装系统底层的 mysql-client，提供 mysqldump 工具
+RUN apt-get update && \
+    apt-get install -y default-mysql-client && \
+    rm -rf /var/lib/apt/lists/*
+
 # 复制依赖文件并安装
 COPY requirements.txt .
 # 使用阿里云镜像源加速安装（国内服务器必备，国外服务器可删去 -i 部分）

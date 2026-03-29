@@ -1,4 +1,4 @@
-.env文件内容：
+## .env文件内容
 
 ```ini
 API_KEY = sk-xxxxxx
@@ -9,6 +9,15 @@ MYSQL_DATABASE = your_db_name
 MYSQL_HOST = localhost
 MYSQL_PORT = 3306
 ```
+
+## 创建requirements.txt
+
+```shell
+pip install pipreqs
+pipreqs . --encoding=utf8 --force
+```
+
+## 部署
 
 删除旧容器
 

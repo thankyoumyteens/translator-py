@@ -8,7 +8,6 @@ import env_setup
 
 from sqlmodel import SQLModel, create_engine, Session
 
-app_env = os.environ.get("APP_ENV")
 mysql_user = os.environ.get("MYSQL_USER")
 mysql_password = os.environ.get("MYSQL_PASSWORD")
 mysql_database = os.environ.get("MYSQL_DATABASE")

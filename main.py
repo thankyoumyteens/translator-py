@@ -2,9 +2,11 @@ import logging
 from contextlib import asynccontextmanager
 
 import uvicorn
+from apscheduler.schedulers.background import BackgroundScheduler
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 
+from common.logger import logger
 from common.exceptions import custom_validation_exception_handler
 from common.logger import InterceptHandler
 from data.database import create_db_and_tables
@@ -12,12 +14,28 @@ from routers.auth.index import auth_router
 from routers.chat.index import chat_router
 from fastapi.middleware.cors import CORSMiddleware
 
+from tasks.backup import backup_database
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # 应用启动时创建 MySQL 表 (如果已存在则跳过)
+    # 1. 启动时的逻辑: 建表
     create_db_and_tables()
+
+    # 2. 🚀 初始化并启动定时任务
+    scheduler = BackgroundScheduler()
+    # 测试用：每隔 1 分钟执行一次
+    # scheduler.add_job(backup_database, 'interval', minutes=1)
+    # 每天凌晨 00:00 执行一次
+    scheduler.add_job(backup_database, 'cron', hour=0, minute=0)
+    scheduler.start()
+    logger.info("⏰ 定时任务调度器已启动 (配置: 每天凌晨 00:00 备份数据库)")
+
     yield
+
+    # 3. 关闭时的逻辑: 优雅地停止定时器
+    scheduler.shutdown()
+    logger.info("🛑 定时任务调度器已关闭")
 
 
 app = FastAPI(title="翻译器", lifespan=lifespan)

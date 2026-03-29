@@ -1,5 +1,5 @@
-from fastapi import APIRouter, Depends
-from sqlmodel import Session, select
+from fastapi import APIRouter, Depends, Query
+from sqlmodel import Session, select, func
 
 from ai.chat_robot import translate
 from common.security import get_current_user, get_optional_current_user
@@ -75,26 +75,35 @@ async def translate_text(
 # 获取历史记录接口
 @chat_router.get("/history")
 def get_my_history(
+        page: int = Query(1, ge=1, description="当前页码，从 1 开始"),
+        page_size: int = Query(20, ge=1, le=100, description="每页条数，最大 100"),
         session: Session = Depends(get_session),
         current_user: User = Depends(get_current_user)
 ):
-    # 🚀 极其优雅的 SQL 联表查询：把 UserHistory 和 TranslationDict 拼起来
+    # 1. 🚀 先查询该用户的总记录数 (前端分页组件必须的数据)
+    count_statement = select(func.count(UserHistory.id)).where(UserHistory.user_id == current_user.id)
+    total_count = session.exec(count_statement).one()
+
+    # 2. 🚀 计算偏移量 (offset)
+    offset = (page - 1) * page_size
+
+    # 3. 🚀 执行原有的优雅联表查询，加上 offset 和 limit
     statement = (
         select(UserHistory, TranslationDict)
         .join(TranslationDict, UserHistory.translation_id == TranslationDict.id)
         .where(UserHistory.user_id == current_user.id)
         .order_by(UserHistory.created_at.desc())
-        .limit(50)
+        .offset(offset)
+        .limit(page_size)
     )
 
-    # 执行查询，返回的是一个包含两个表对象的元组列表
     results = session.exec(statement).all()
 
-    # 组装回前端需要的扁平格式
+    # 4. 组装回前端需要的扁平格式
     history_list = []
     for user_hist, dict_data in results:
         history_list.append({
-            "id": user_hist.id,  # 用历史记录的 ID
+            "id": user_hist.id,
             "original_text": dict_data.original_text,
             "translated_text": dict_data.translated_text,
             "pronounce": dict_data.pronounce,
@@ -103,4 +112,15 @@ def get_my_history(
             "created_at": user_hist.created_at
         })
 
-    return {"code": 200, "message": "success", "data": history_list}
+    # 5. 🚀 返回标准的带分页元数据的结构
+    return {
+        "code": 200,
+        "message": "success",
+        "data": {
+            "items": history_list,
+            "total": total_count,
+            "page": page,
+            "page_size": page_size,
+            "total_pages": (total_count + page_size - 1) // page_size  # 顺手帮前端把总页数算好
+        }
+    }

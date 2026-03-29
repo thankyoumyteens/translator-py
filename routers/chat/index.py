@@ -7,6 +7,7 @@ from data.database import get_session
 from data.models.history import TranslationDict, UserHistory
 from data.models.user import User
 from routers.chat.models import TranslateParams, TranslateResult, AITranslateResult
+from common.logger import logger
 
 chat_router = APIRouter(
     prefix="/chat",
@@ -21,6 +22,7 @@ async def translate_text(
         current_user: User = Depends(get_optional_current_user)  # 🚀 注入可选用户
 ):
     try:
+        logger.info(f"收到翻译请求: '{params.text}'")
         original_text = params.text.strip()
 
         # 1. 去【全局词典库】里查有没有这句话
@@ -29,7 +31,7 @@ async def translate_text(
         ).first()
 
         if dict_record:
-            print("🎯 命中全局词典缓存！")
+            logger.success(f"🎯 命中全局词典缓存！ID: {dict_record.id}")
             translation_id = dict_record.id
             result = AITranslateResult(
                 translated_text=dict_record.translated_text,
@@ -38,8 +40,9 @@ async def translate_text(
                 pronounce_tips=dict_record.pronounce_tips
             )
         else:
-            print(f"⏳ 未命中缓存，正在请求 AI: {original_text}")
+            logger.info("⏳ 未命中缓存，请求 AI 中...")
             result = await translate(original_text)
+            logger.success(f"翻译结果: {result}")
             new_dict_record = TranslationDict(
                 original_text=params.text,  # 前端传来的原文
                 translated_text=result.translated_text,
@@ -51,8 +54,6 @@ async def translate_text(
             session.commit()
             session.refresh(new_dict_record)  # 获取数据库刚刚分配的自增 ID
             translation_id = new_dict_record.id
-
-        print(result)
 
         # 2. 如果用户登录了，仅仅往【用户历史表】里塞一个绑定关系
         if current_user:
@@ -67,7 +68,7 @@ async def translate_text(
 
         return TranslateResult(code=200, message="翻译成功", translated_text=result)
     except Exception as e:
-        print(e)
+        logger.exception(f"翻译接口发生异常: {str(e)}")
         return TranslateResult(code=500, message=str(e))
 
 

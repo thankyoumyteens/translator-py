@@ -1,3 +1,4 @@
+import logging
 from contextlib import asynccontextmanager
 
 import uvicorn
@@ -5,6 +6,7 @@ from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 
 from common.exceptions import custom_validation_exception_handler
+from common.logger import InterceptHandler
 from data.database import create_db_and_tables
 from routers.auth.index import auth_router
 from routers.chat.index import chat_router
@@ -19,6 +21,23 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="翻译器", lifespan=lifespan)
+
+# ==========================================
+# 🚀 全局日志劫持配置 (黑魔法激活)
+# ==========================================
+# 1. 拦截 Uvicorn 的标准日志和错误日志
+logging.getLogger("uvicorn.access").handlers = [InterceptHandler()]
+logging.getLogger("uvicorn.error").handlers = [InterceptHandler()]
+
+# 2. 拦截 FastAPI 内部的日志
+logging.getLogger("fastapi").handlers = [InterceptHandler()]
+
+# 3. 拦截 SQLAlchemy 的底层 SQL 打印日志 (这样连 SQL 语句都会被写进文件里)
+logging.getLogger("sqlalchemy.engine.Engine").handlers = [InterceptHandler()]
+
+# 4. 强制接管 root logger，防止任何漏网之鱼
+logging.getLogger().handlers = [InterceptHandler()]
+# ==========================================
 
 app.add_middleware(
     CORSMiddleware,

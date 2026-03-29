@@ -1,23 +1,45 @@
-# 使用官方轻量级 Python 镜像
+# Dockerfile (全球通用版)
 FROM python:3.11-slim
 
-# 设置工作目录
 WORKDIR /app
 
-# 防止 Python 缓冲标准输出和错误（能及时在控制台看到日志）
-ENV PYTHONUNBUFFERED=1
+# 告诉 Poetry：不要在 Docker 里建虚拟环境，直接装在系统 Python 里！
+ENV PYTHONUNBUFFERED=1 \
+    POETRY_VIRTUALENVS_CREATE=false \
+    POETRY_VERSION=2.1.1
 
-# 安装系统底层的 mysql-client，提供 mysqldump 工具
-RUN apt-get update && \
+# 定义构建参数，默认值为 false（即默认使用官方源，适合国外服务器）
+ARG USE_CHINA_MIRROR=false
+
+# 动态判断是否替换 apt 源，并安装 MySQL 客户端
+RUN if [ "$USE_CHINA_MIRROR" = "true" ]; then \
+        echo "🌍 检测到国内环境，正在启用阿里云 apt 镜像源..." && \
+        sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debian.sources 2>/dev/null || true && \
+        sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list 2>/dev/null || true ; \
+    fi && \
+    apt-get update && \
     apt-get install -y default-mysql-client && \
     rm -rf /var/lib/apt/lists/*
 
-# 复制依赖文件并安装
-COPY requirements.txt .
-# 使用阿里云镜像源加速安装（国内服务器必备，国外服务器可删去 -i 部分）
-RUN pip install --no-cache-dir -r requirements.txt -i https://mirrors.aliyun.com/pypi/simple/
+# 安装 Poetry 本身
+RUN if [ "$USE_CHINA_MIRROR" = "true" ]; then \
+        pip install "poetry==$POETRY_VERSION" -i https://mirrors.aliyun.com/pypi/simple/ ; \
+    else \
+        pip install "poetry==$POETRY_VERSION" ; \
+    fi
 
-# 复制整个项目代码到容器内
+# 拷贝并安装项目依赖（利用 Docker 缓存机制）
+# 拷贝配置文件（注意：加了星号，意味着如果有 lock 就拷，没有拉倒）
+COPY pyproject.toml poetry.lock* ./
+
+RUN if [ "$USE_CHINA_MIRROR" = "true" ]; then \
+        echo "🌍 启用阿里云 Poetry 镜像源..." && \
+        poetry source add --priority=primary mirrors https://mirrors.aliyun.com/pypi/simple/ ; \
+    fi && \
+    poetry lock && \
+    poetry install --no-root --only main
+
+# 拷贝剩余的业务代码
 COPY . .
 
 # 暴露 FastAPI 运行的端口

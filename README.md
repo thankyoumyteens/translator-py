@@ -101,7 +101,7 @@ docker run -d \
   --name translator-backend \
   -p 7152:8000 \
   -v $(pwd)/logs:/app/logs \
-  --env-file ../.env.prod \
+  --env-file .env.prod \
   --restart unless-stopped \
   translator-api
 ```

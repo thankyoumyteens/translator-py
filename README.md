@@ -74,8 +74,8 @@ docker rm -f translator-backend
 rm -rf translator-backend/
 rm translator_release_*.zip 
 
-# 解压最新代码（假设上传的包名为 release.zip）
-unzip translator_release_xxx.zip
+# 解压最新代码
+unzip translator_release_*.zip
 cd translator-backend/
 
 # 创建宿主机日志与备份挂载目录

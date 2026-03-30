@@ -1,11 +1,10 @@
 import asyncio
 import os
+from openai import AsyncOpenAI  # 🚀 直接引入底层的 OpenAI 原生异步客户端
 
 # noinspection PyUnusedImports
 import env_setup
 
-from langchain_openai import ChatOpenAI
-from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import PydanticOutputParser
 from common.logger import logger
 from routers.chat.models import AITranslateResult
@@ -35,58 +34,79 @@ system_prompt = """
 {format_instructions}
 """
 
-# 初始化解析器
+# 保留 LangChain 极其好用的 JSON Schema 解析器
 parser = PydanticOutputParser(pydantic_object=AITranslateResult)
 
-# 构建 Prompt 模板
-prompt = ChatPromptTemplate.from_messages([
-    ("system", system_prompt),
-    ("user", "请帮我翻译这句话，并进行发音拆解：\n\n{text}")
-])
-
-# 初始化大模型 (使用硅基流动 Kimi 接口)
-model = ChatOpenAI(
+# 🚀 绕过 LangChain 的 ChatOpenAI，直接初始化原生客户端
+client = AsyncOpenAI(
     api_key=os.environ.get("API_KEY"),
     base_url="https://api.siliconflow.cn/v1",
-    model="Pro/moonshotai/Kimi-K2.5",
-    temperature=0.5,
-    # 如果模型支持强制 JSON 模式，可以加上这个参数提升稳定性
-    # model_kwargs={"response_format": {"type": "json_object"}},
 )
 
-# 构建 LangChain 处理链路
-chain = prompt | model | parser
 
+async def translate_stream(text: str):
+    logger.info(f"🤖 正在呼叫 AI 翻译引擎处理(流式): '{text}'")
 
-async def translate(text: str) -> AITranslateResult:
-    """
-    异步调用大模型进行翻译和发音解析
-    """
-    logger.info(f"🤖 正在呼叫 AI 翻译引擎处理: '{text}'")
+    # 1. 手动组装 Messages，将 JSON 格式要求强行注入 system prompt
+    formatted_system = system_prompt.replace("{format_instructions}", parser.get_format_instructions())
+    messages = [
+        {"role": "system", "content": formatted_system},
+        {"role": "user", "content": f"请帮我翻译这句话，并进行发音拆解：\n\n{text}"}
+    ]
+
+    full_content = ""
+
     try:
-        result = await chain.ainvoke({
-            "text": text,
-            "format_instructions": parser.get_format_instructions()
-        })
-        logger.success("✅ AI 翻译并解析成功！")
-        return result
+        # 2. 使用原生客户端发起流式请求 (不经过 LangChain 的拦截层)
+        response = await client.chat.completions.create(
+            model="Pro/moonshotai/Kimi-K2.5",
+            messages=messages,
+            temperature=0.5,
+            stream=True
+        )
+
+        async for chunk in response:
+            if not chunk.choices:
+                continue
+
+            delta = chunk.choices[0].delta
+
+            # 🚀 核心破解：绕开各种限制，直接从底层的附加字典里抠出 thinking 内容
+            reasoning = getattr(delta, "reasoning_content", None)
+            if reasoning is None and hasattr(delta, "model_extra") and delta.model_extra:
+                reasoning = delta.model_extra.get("reasoning_content")
+
+            if reasoning:
+                yield {"type": "thinking", "content": reasoning}
+
+            content = delta.content
+            if content:
+                full_content += content
+                yield {"type": "content", "content": content}
+
+        # 3. 数据流接收完毕后，依然利用 LangChain 的 Parser 进行严谨的 JSON 反序列化
+        logger.success("✅ AI 流式接收完毕，准备解析...")
+        parsed_result = parser.parse(full_content)
+
+        yield {"type": "finish", "result": parsed_result}
+
     except Exception as e:
-        logger.error(f"❌ AI 解析失败，可能的原因是输出格式不匹配或网络超时: {e}")
-        raise
+        logger.error(f"❌ AI 流式解析失败: {e}")
+        yield {"type": "error", "message": str(e)}
 
 
 async def main():
-    # 测试 1: 中译英
-    print("\n" + "=" * 40)
-    cn_text = "你打算去商店买点水吗？顺便帮我带杯咖啡吧。"
-    res1 = await translate(cn_text)
-    print(res1.model_dump_json(indent=2))
-
-    # 测试 2: 英译中
-    print("\n" + "=" * 40)
-    en_text = "What are you doing later? I was thinking we could grab a bite."
-    res2 = await translate(en_text)
-    print(res2.model_dump_json(indent=2))
+    print("⏳ 开始流式测试...")
+    async for event in translate_stream("What are you doing later? I was thinking we could grab a bite."):
+        if event["type"] == "thinking":
+            # 灰色打印思考过程
+            print(f"\033[90m{event['content']}\033[0m", end="", flush=True)
+        elif event["type"] == "content":
+            # 绿色打印 JSON 输出
+            print(f"\033[92m{event['content']}\033[0m", end="", flush=True)
+        elif event["type"] == "finish":
+            print("\n\n🎉 最终解析结果:")
+            print(event["result"].model_dump_json(indent=2))
 
 
 if __name__ == '__main__':

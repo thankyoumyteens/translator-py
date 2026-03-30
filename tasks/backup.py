@@ -32,6 +32,7 @@ def backup_database():
         f"-u{user}",
         f"-p{password}",
         "--protocol=tcp",
+        "--ssl-mode=DISABLED",
         "--skip-extended-insert",
         "--complete-insert",
         "--default-character-set=utf8mb4",

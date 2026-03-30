@@ -22,7 +22,13 @@ else:
 
 DATABASE_URL = f"mysql+pymysql://{mysql_user}:{encoded_password}@{msql_host}:{mysql_port}/{mysql_database}"
 
-engine = create_engine(DATABASE_URL, echo=True)
+# 加上防断连双保险）：
+engine = create_engine(
+    DATABASE_URL,
+    echo=False,  # 生产环境建议关掉 echo，不然日志会被 SQL 语句撑爆
+    pool_pre_ping=True,  # 🌟 核心修复1：每次从池子里拿连接前，先发个"SELECT 1"试探一下，如果死了就自动重连！
+    pool_recycle=3600,  # 🌟 核心修复2：每隔 3600 秒（1小时），强行回收并重建一次连接池里的连接。
+)
 
 
 def create_db_and_tables():

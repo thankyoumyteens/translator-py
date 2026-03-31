@@ -30,9 +30,9 @@ def backup_database():
         f"-h{host}",
         f"-P{port}",
         f"-u{user}",
-        f"-p{password}",
+        f"-p'{password}'",
         "--protocol=tcp",
-        "--ssl-mode=DISABLED",
+        "--skip-ssl",  # 🚀 换成这个：专门针对 MariaDB/老版本客户端的参数
         "--skip-extended-insert",
         "--complete-insert",
         "--default-character-set=utf8mb4",

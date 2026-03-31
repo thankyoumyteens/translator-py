@@ -32,6 +32,12 @@ system_prompt = """
 ## 4. 输出格式要求 (Strict Output Format)
 你必须严格遵守以下 JSON 数据结构，绝对不要输出任何在这个 JSON 结构之外的说明文字或 Markdown 标记：
 {format_instructions}
+
+## 5. 思考过程约束 (Strict Thinking Constraints)
+你的深度思考过程对用户是可见的。因此，在你的思考过程（Thinking Process）中：
+1. **只专注**于推敲翻译的信达雅、选择地道的俚语、以及分析发音规律。
+2. **严禁**提及“JSON”、“数据结构”、“字段”、“键值对”等代码术语。
+3. **严禁**在思考中探讨如何格式化输出，把组装 JSON 当作你不假思索的本能动作，把思考算力全部留给语言学分析！
 """
 
 # 保留 LangChain 极其好用的 JSON Schema 解析器

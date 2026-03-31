@@ -1,5 +1,5 @@
 import json
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import StreamingResponse
 from sqlmodel import Session, select, func
 
@@ -21,6 +21,7 @@ chat_router = APIRouter(
 @chat_router.post("/translate")
 async def translate_text(
         params: TranslateParams,
+        request: Request,  # 🚀 2. 在参数里注入 Request 对象
         session: Session = Depends(get_session),
         current_user: User = Depends(get_optional_current_user)
 ):
@@ -66,6 +67,11 @@ async def translate_text(
             translation_id = None
 
             async for event in translate_stream(original_text):
+                # 🚀 3. 核心护城河：每次准备给前端发数据前，先看一眼前端还在不在！
+                if await request.is_disconnected():
+                    logger.warning(f"🛑 客户端已主动掐断连接，立即终止 AI 生成！(原文: {original_text[:10]}...)")
+                    break  # 直接 break 退出生成器，大模型的流式请求会自动被 Python 垃圾回收并终止
+
                 # 如果收到思考过程或内容片段，直接实时推给前端
                 if event["type"] in ["thinking", "content"]:
                     yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"

@@ -1,5 +1,6 @@
 import asyncio
 import os
+import httpx
 from openai import AsyncOpenAI  # 🚀 直接引入底层的 OpenAI 原生异步客户端
 
 # noinspection PyUnusedImports
@@ -40,20 +41,29 @@ system_prompt = """
 3. **严禁**在思考中探讨如何格式化输出，把组装 JSON 当作你不假思索的本能动作，把思考算力全部留给语言学分析！
 """
 
+MODEL_NAME = os.environ.get("MODEL_NAME")
+
 # 保留 LangChain 极其好用的 JSON Schema 解析器
 parser = PydanticOutputParser(pydantic_object=AITranslateResult)
+
+# 从环境变量读取你的代理地址（如果没有配置，默认为空）
+PROXY_URL = os.environ.get("PROXY_URL", None)
+
+# 创建一个自带代理隧道的 HTTP 客户端
+custom_http_client = httpx.AsyncClient(proxy=PROXY_URL) if PROXY_URL else None
 
 # 🚀 绕过 LangChain 的 ChatOpenAI，直接初始化原生客户端
 client = AsyncOpenAI(
     api_key=os.environ.get("API_KEY"),
-    base_url="https://api.siliconflow.cn/v1",
+    base_url=os.environ.get("BASE_URL"),
+    http_client=custom_http_client  # ✨ 核心魔法：只有发往大模型的请求才会走这条专属隧道！
 )
 
 
 async def translate_stream(text: str):
     logger.info(f"🤖 正在呼叫 AI 翻译引擎处理(流式): '{text}'")
 
-    # 1. 手动组装 Messages，将 JSON 格式要求强行注入 system prompt
+    # 手动组装 Messages，将 JSON 格式要求强行注入 system prompt
     formatted_system = system_prompt.replace("{format_instructions}", parser.get_format_instructions())
     messages = [
         {"role": "system", "content": formatted_system},
@@ -63,13 +73,29 @@ async def translate_stream(text: str):
     full_content = ""
 
     try:
-        # 2. 使用原生客户端发起流式请求 (不经过 LangChain 的拦截层)
-        response = await client.chat.completions.create(
-            model="Pro/moonshotai/Kimi-K2.5",
-            messages=messages,
-            temperature=0.5,
-            stream=True
-        )
+        # 准备基础请求参数
+        request_kwargs = {
+            "model": MODEL_NAME,
+            "messages": messages,
+            "temperature": 0.5,
+            "stream": True,
+        }
+
+        # 建立一个“白名单”，只有这些支持强约束的模型才开启 JSON 模式
+        # 你可以根据实际测试情况随时往这个列表里加模型
+        json_supported_models = [
+            "gemini-2.0-flash",
+            "deepseek-ai/DeepSeek-V3",
+            "deepseek-ai/DeepSeek-R1",
+            "Qwen/Qwen2.5-72B-Instruct"
+        ]
+
+        if MODEL_NAME in json_supported_models:
+            request_kwargs["response_format"] = {"type": "json_object"}
+            logger.info(f"✨ 模型 {MODEL_NAME} 在白名单中，已开启底层 JSON 强制约束")
+
+        # 使用原生客户端发起流式请求 (不经过 LangChain 的拦截层)
+        response = await client.chat.completions.create(**request_kwargs)
 
         async for chunk in response:
             if not chunk.choices:
@@ -90,11 +116,24 @@ async def translate_stream(text: str):
                 full_content += content
                 yield {"type": "content", "content": content}
 
-        # 3. 数据流接收完毕后，依然利用 LangChain 的 Parser 进行严谨的 JSON 反序列化
+        # 数据流接收完毕后，依然利用 LangChain 的 Parser 进行严谨的 JSON 反序列化
         logger.success("✅ AI 流式接收完毕，准备解析...")
-        parsed_result = parser.parse(full_content)
-
-        yield {"type": "finish", "result": parsed_result}
+        clean_content = full_content.strip()
+        # 如果发现内容是以 ``` 开头的，说明被包裹了
+        if clean_content.startswith("```"):
+            # 寻找第一个 { 和最后一个 } 的位置
+            start_idx = clean_content.find("{")
+            end_idx = clean_content.rfind("}")
+            if start_idx != -1 and end_idx != -1:
+                # 只截取中间的纯 JSON 部分
+                clean_content = clean_content[start_idx: end_idx + 1]
+        try:
+            # 使用清洗后的内容进行解析
+            parsed_result = parser.parse(clean_content)
+            yield {"type": "finish", "result": parsed_result}
+        except Exception as parse_err:
+            logger.error(f"解析清洗后的 JSON 失败: {parse_err}\n内容为: {clean_content}")
+            yield {"type": "error", "message": "JSON 结构解析失败，请重试"}
 
     except Exception as e:
         logger.error(f"❌ AI 流式解析失败: {e}")

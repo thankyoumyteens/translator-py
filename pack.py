@@ -4,10 +4,7 @@ from datetime import datetime
 
 # 1. 配置项
 PROJECT_ROOT = "."  # 当前目录
-# 🚀 新增：压缩包内的顶层目录名
-TOP_LEVEL_DIR = "translator-backend"
-# 生成的压缩包名称
-ZIP_FILENAME = f"translator_release_{datetime.now().strftime('%Y%m%d_%H%M')}.zip"
+TOP_LEVEL_DIR = "translator-backend"  # 压缩包内的顶层目录名
 
 # 定义要忽略的目录（防止打包 node_modules, 虚拟环境等）
 IGNORE_DIRS = {
@@ -23,51 +20,77 @@ IGNORE_DIRS = {
     "logs"
 }
 
-# 定义要忽略的文件
+# 定义要忽略的基础文件
 IGNORE_FILES = {
     ".env",
     ".DS_Store",
-    "pack.py",
-    ZIP_FILENAME
+    "pack.py"
 }
 
 
-def create_deploy_zip():
-    print(f"📦 开始打包项目代码...")
-    print(f"🚫 自动过滤以下目录: {', '.join(IGNORE_DIRS)}")
+# 🚀 新增：清理旧包的专属函数
+def clean_old_builds():
+    print("🧹 开始清理历史部署包...")
+    count = 0
+    # 遍历根目录下的文件
+    for file in os.listdir(PROJECT_ROOT):
+        # 精准匹配我们自己生成的 zip 包命名格式
+        if file.startswith("translator_release_") and file.endswith(".zip"):
+            file_path = os.path.join(PROJECT_ROOT, file)
+            os.remove(file_path)
+            print(f"   🗑️ 已删除: {file}")
+            count += 1
+
+    if count == 0:
+        print("   ✨ 目录很干净，没有发现旧包。")
+    else:
+        print(f"   ✅ 成功清理了 {count} 个历史文件！\n")
+
+
+def create_deploy_zip(target_env_file: str, variant_name: str):
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M')
+    zip_filename = f"translator_release_{variant_name}_{timestamp}.zip"
+
+    print(f"\n📦 正在构建 [{variant_name}] 专属包...")
 
     file_count = 0
 
-    with zipfile.ZipFile(ZIP_FILENAME, 'w', zipfile.ZIP_DEFLATED) as zipf:
+    with zipfile.ZipFile(zip_filename, 'w', zipfile.ZIP_DEFLATED) as zipf:
         for root, dirs, files in os.walk(PROJECT_ROOT):
-            # 动态修改 dirs，排除不需要遍历的目录
             dirs[:] = [d for d in dirs if d not in IGNORE_DIRS]
 
             for file in files:
-                # 🚀 核心修复：直接忽略所有 .zip 后缀的文件！
                 if file.endswith('.zip'):
                     continue
 
                 if file in IGNORE_FILES:
                     continue
 
-                # 拼接本地文件的绝对路径
+                if file.startswith('.env.'):
+                    if file != target_env_file:
+                        continue
+
                 file_path = os.path.join(root, file)
-
-                # 计算原本的相对路径
                 rel_path = os.path.relpath(file_path, PROJECT_ROOT)
-
-                # 🚀 核心修改：在 zip 包里的路径前，硬塞一个顶层目录
                 arcname = os.path.join(TOP_LEVEL_DIR, rel_path)
 
-                # 写入 zip
                 zipf.write(file_path, arcname)
                 file_count += 1
 
-    print(f"✅ 打包完成！共压缩了 {file_count} 个文件。")
-    print(f"📂 解压后将生成独立目录: {TOP_LEVEL_DIR}/")
-    print(f"💾 产物路径: ./{ZIP_FILENAME}")
+    print(f"✅ [{variant_name}] 打包完成！共压缩 {file_count} 个文件。")
+    print(f"💾 产物路径: ./{zip_filename}")
 
 
 if __name__ == "__main__":
-    create_deploy_zip()
+    print("🚀 启动自动化多环境构建流水线...\n")
+
+    # 0. 🚀 执行打包前，先全自动清理现场
+    clean_old_builds()
+
+    # 1. 打出 Gemini 专属包 (仅包含 .env.gemini)
+    create_deploy_zip(target_env_file=".env.gemini", variant_name="gemini")
+
+    # 2. 打出 SiliconFlow 专属包 (仅包含 .env.siliconflow)
+    create_deploy_zip(target_env_file=".env.siliconflow", variant_name="siliconflow")
+
+    print("\n🎉 全部打包任务已彻底完成！")

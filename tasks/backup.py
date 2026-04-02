@@ -7,32 +7,33 @@ from common.logger import logger
 def backup_database():
     logger.info("🕒 开始执行定时任务：MySQL 数据库全量备份...")
 
-    # 将备份文件保存在 logs/backups 目录下，这样能顺着 Docker 挂载直接同步到物理机
     backup_dir = os.path.join("logs", "backups")
     os.makedirs(backup_dir, exist_ok=True)
 
-    # 生成带时间戳的文件名，例如: db_backup_20260329_000000.sql
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     filepath = os.path.join(backup_dir, f"db_backup_{timestamp}.sql")
 
-    # 从环境变量中读取数据库配置 (兼容本地开发和 Docker 生产环境)
     host = os.environ.get("MYSQL_HOST")
     port = os.environ.get("MYSQL_PORT")
     user = os.environ.get("MYSQL_USER")
-    password = os.environ.get("MYSQL_PASSWORD")  # 本地测试时填入你的密码
+    password = os.environ.get("MYSQL_PASSWORD")
     db_name = os.environ.get("MYSQL_DATABASE")
 
-    # 构建 mysqldump 命令
-    # --skip-extended-insert: 强制每条数据生成一个独立的 INSERT 语句（更易读）
-    # --complete-insert: 包含列名（更严谨）
+    # 🚀 核心大招：克隆当前环境变量，并悄悄塞入 MYSQL_PWD
+    # 这样既不会污染全局环境，又能让 mysqldump 安全地拿到密码
+    run_env = os.environ.copy()
+    if password:
+        run_env["MYSQL_PWD"] = password
+
+    # 构建命令：彻底删掉那个烦人的 -p 参数！
     cmd = [
         "mysqldump",
         f"-h{host}",
         f"-P{port}",
         f"-u{user}",
-        f"-p'{password}'",
+        # 注意：这里绝对没有 -p 了！
         "--protocol=tcp",
-        "--skip-ssl",  # 🚀 换成这个：专门针对 MariaDB/老版本客户端的参数
+        "--skip-ssl",
         "--skip-extended-insert",
         "--complete-insert",
         "--default-character-set=utf8mb4",
@@ -40,17 +41,16 @@ def backup_database():
     ]
 
     try:
-        # 使用 subprocess 执行命令，并将输出流 (stdout) 直接写入 .sql 文件
         with open(filepath, "w", encoding="utf-8") as f:
-            result = subprocess.run(cmd, stdout=f, stderr=subprocess.PIPE, text=True)
+            # 🚀 核心：将携带了 MYSQL_PWD 的环境传给 subprocess
+            result = subprocess.run(cmd, stdout=f, stderr=subprocess.PIPE, text=True, env=run_env)
 
-        # 检查是否报错
         if result.returncode == 0:
             logger.success(f"✅ 数据库备份成功！已保存至: {filepath}")
         else:
             logger.error(f"❌ 数据库备份失败！错误信息: {result.stderr}")
 
     except FileNotFoundError:
-        logger.error("❌ 找不到 mysqldump 命令！如果你在 Docker 中运行，请确保镜像内安装了 mysql-client。")
+        logger.error("❌ 找不到 mysqldump 命令！请确保运行环境中安装了 mysql-client。")
     except Exception as e:
         logger.exception(f"❌ 备份过程中发生未知异常: {str(e)}")

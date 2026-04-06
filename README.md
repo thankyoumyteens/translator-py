@@ -48,6 +48,12 @@ MYSQL_PASSWORD = 123456
 MYSQL_DATABASE = your_db_name
 MYSQL_HOST = localhost
 MYSQL_PORT = 3306
+
+# --- 云端备份配置 (兼容所有 S3 协议) ---
+S3_ENDPOINT_URL=https://xxxxxx.r2.cloudflarestorage.com
+S3_ACCESS_KEY=xxxxxx
+S3_SECRET_KEY=xxxxxx
+S3_BUCKET_NAME=xxx
 ```
 
 部署时可以创建 `.env.siliconflow` 文件（比如使用硅基流动的 API）进行生产环境变量的配置，

@@ -60,13 +60,19 @@ logging.getLogger().handlers = [InterceptHandler()]
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],  # 开发阶段允许所有来源
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 # 注册全局异常处理器
 app.add_exception_handler(RequestValidationError, custom_validation_exception_handler)
+
+
+@app.get("/ping")
+async def health_check():
+    return {"status": "ok", "message": "pong！后端服务运行正常"}
+
 
 app.include_router(auth_router)
 app.include_router(chat_router)

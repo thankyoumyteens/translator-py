@@ -2,7 +2,11 @@ from pydantic import BaseModel, Field
 
 
 class TranslateParams(BaseModel):
-    text: str = Field(..., description="待翻译的文本")
+    text: str = Field(..., description="需要翻译或解释的原文")
+    # 🚀 新增模型选择字段，并给一个默认值兜底（防止旧版前端发请求报错）
+    model_id: str = Field(default="openai/gpt-5.4", description="指定使用的大模型 ID")
+    # 🚀 新增强制刷新标志，默认 False 保持原有逻辑兼容
+    force_refresh: bool = Field(default=False, description="是否强制绕过缓存重新生成")
 
 
 class AITranslateResult(BaseModel):

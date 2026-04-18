@@ -1,3 +1,4 @@
+# routers/chat/index.py
 import json
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import StreamingResponse
@@ -17,6 +18,26 @@ chat_router = APIRouter(
 )
 
 
+# 🚀 1. 新增：向前端提供可用模型列表的接口
+@chat_router.get("/models")
+def get_available_models():
+    """获取系统支持的 AI 模型列表，供前端下拉框使用"""
+    # 这里也可以做成查数据库配置，目前硬编码即可满足需求
+    return {
+        "code": 200,
+        "message": "success",
+        "data": [
+            {"id": "openai/gpt-5.4", "name": "GPT-5.4 (智能均衡)", "is_default": True},
+            {"id": "openai/gpt-5.4-pro", "name": "GPT-5.4 Pro (最强推理)"},
+            {"id": "openai/gpt-5.3-codex", "name": "GPT-5.3 Codex (代码/逻辑专精)"},
+            {"id": "google/gemini-2.5-flash", "name": "Gemini 2.5 Flash (极速/高性价比)"},
+            {"id": "google/gemini-2.5-pro", "name": "Gemini 2.5 Pro (超长上下文/全能)"},
+            {"id": "xai/grok-3", "name": "Grok 3 (实时/无审查)"},
+            {"id": "xai/grok-4", "name": "Grok 4 (前沿探索)"},
+        ]
+    }
+
+
 # 🚀 极其关键：去掉了 response_model=TranslateResult，因为流式返回不走普通校验
 @chat_router.post("/translate")
 async def translate_text(
@@ -26,18 +47,20 @@ async def translate_text(
         current_user: User = Depends(get_optional_current_user)
 ):
     original_text = params.text.strip()
-    logger.info(f"收到翻译请求: '{original_text}'")
+    model_id = params.model_id  # 🚀 2. 获取前端指定的模型
+    force_refresh = params.force_refresh  # 🚀 1. 提取刷新标志
+    logger.info(f"收到翻译请求: '{original_text}', 指定模型: {model_id}")
 
     async def event_generator():
         try:
-            # 1. 优先查缓存
+            # 🚀 2. 先把词典记录查出来，不管用不用缓存，后面存库时都要判断
             dict_record = session.exec(
                 select(TranslationDict).where(TranslationDict.original_text == original_text)
             ).first()
 
-            if dict_record:
+            # 🚀 3. 如果有缓存，且【没有】要求强制刷新，才直接秒回缓存
+            if dict_record and not force_refresh:
                 logger.success(f"🎯 命中全局词典缓存！ID: {dict_record.id}")
-                # 缓存命中时，直接通过 finish 事件把完整数据秒发给前端，无需等待
                 cached_data = {
                     "source_language": "cached",
                     "original_text": dict_record.original_text,
@@ -46,8 +69,6 @@ async def translate_text(
                     "pronounce_tips": dict_record.pronounce_tips,
                     "comment": dict_record.comment
                 }
-
-                # 记录用户历史
                 if current_user:
                     history_stmt = select(UserHistory).where(
                         UserHistory.user_id == current_user.id,
@@ -57,8 +78,6 @@ async def translate_text(
                         new_history = UserHistory(user_id=current_user.id, translation_id=dict_record.id)
                         session.add(new_history)
                         session.commit()
-
-                # 按照 SSE 规范发送数据
                 yield f"data: {json.dumps({'type': 'finish', 'result': cached_data}, ensure_ascii=False)}\n\n"
                 return
 
@@ -66,7 +85,7 @@ async def translate_text(
             logger.info("⏳ 未命中缓存，请求 AI 流式生成中...")
             translation_id = None
 
-            async for event in translate_stream(original_text):
+            async for event in translate_stream(original_text, model_id):
                 # 🚀 3. 核心护城河：每次准备给前端发数据前，先看一眼前端还在不在！
                 if await request.is_disconnected():
                     logger.warning(f"🛑 客户端已主动掐断连接，立即终止 AI 生成！(原文: {original_text[:10]}...)")
@@ -81,24 +100,43 @@ async def translate_text(
                     parsed_result: AITranslateResult = event["result"]
                     logger.success("数据校验成功，正在持久化到数据库...")
 
-                    # 存入全局词典
-                    new_dict_record = TranslationDict(
-                        original_text=original_text,
-                        translated_text=parsed_result.translated_text,
-                        pronounce=parsed_result.pronounce,
-                        pronounce_tips=parsed_result.pronounce_tips,
-                        comment=parsed_result.comment
-                    )
-                    session.add(new_dict_record)
-                    session.commit()
-                    session.refresh(new_dict_record)
-                    translation_id = new_dict_record.id
+                    # 🚀 5. 核心修改：智能覆盖或新增
+                    if dict_record:
+                        # 词典里本来就有这句英文，直接更新字段内容，绝不产生重复脏数据
+                        dict_record.translated_text = parsed_result.translated_text
+                        dict_record.pronounce = parsed_result.pronounce
+                        dict_record.pronounce_tips = parsed_result.pronounce_tips
+                        dict_record.comment = parsed_result.comment
+                        session.add(dict_record)
+                        session.commit()
+                        translation_id = dict_record.id
+                        logger.info(f"🔄 覆盖更新已有词典记录，ID: {translation_id}")
+                    else:
+                        # 词典里没有，是全新的一句话，正常插入
+                        new_dict_record = TranslationDict(
+                            original_text=original_text,
+                            translated_text=parsed_result.translated_text,
+                            pronounce=parsed_result.pronounce,
+                            pronounce_tips=parsed_result.pronounce_tips,
+                            comment=parsed_result.comment
+                        )
+                        session.add(new_dict_record)
+                        session.commit()
+                        session.refresh(new_dict_record)
+                        translation_id = new_dict_record.id
+                        logger.info(f"✨ 插入全新词典记录，ID: {translation_id}")
 
                     # 存入用户历史
-                    if current_user:
-                        new_history = UserHistory(user_id=current_user.id, translation_id=translation_id)
-                        session.add(new_history)
-                        session.commit()
+                        # 存入用户历史（防重处理）
+                        if current_user:
+                            history_stmt = select(UserHistory).where(
+                                UserHistory.user_id == current_user.id,
+                                UserHistory.translation_id == translation_id
+                            )
+                            if not session.exec(history_stmt).first():
+                                new_history = UserHistory(user_id=current_user.id, translation_id=translation_id)
+                                session.add(new_history)
+                                session.commit()
 
                     # 将最终的结构化数据发给前端收尾
                     yield f"data: {json.dumps({'type': 'finish', 'result': parsed_result.model_dump()}, ensure_ascii=False)}\n\n"

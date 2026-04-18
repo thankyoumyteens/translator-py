@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 from typing import Optional
 from sqlmodel import Field, SQLModel
 from sqlalchemy import text
+from datetime import date
 
 
 # 对应数据库里的表
@@ -9,6 +10,11 @@ class User(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True, description="用户 ID")
     username: str = Field(unique=True, index=True, max_length=50, description="用户名")
     hashed_password: str = Field(description="密码")
+
+    # 🚀 新增：记录用户今天的刷新次数
+    daily_refresh_count: int = Field(default=0)
+    # 🚀 新增：记录用户最后一次刷新的日期
+    last_refresh_date: date = Field(default_factory=date.today)
 
     # --- 新增的审计字段 ---
 
